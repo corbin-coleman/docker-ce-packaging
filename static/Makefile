@@ -6,6 +6,13 @@ STATIC_VERSION=$(shell ./gen-static-ver $(ENGINE_DIR) $(VERSION))
 CHOWN=docker run --rm -v $(CURDIR):/v -w /v alpine chown
 HASH_CMD=docker run -v $(CURDIR):/sum -w /sum debian:jessie bash hash_files
 DIR_TO_HASH:=build/linux
+CONTAINERD_REPO=containerd/containerd
+CONTAINERD_DIR=$(shell basename $(CONTAINERD_REPO))
+CONTAINERD_REF=468a545b9edcd5932818eb9de8e72413e616e86e
+CTR_BIN=$(CURDIR)/$(CONTAINERD_DIR)/bin/ctr.exe
+CONTAINERD_BIN=$(CURDIR)/$(CONTAINERD_DIR)/bin/containerd.exe
+SHIM_BIN=$(CURDIR)/$(CONTAINERD_DIR)/bin/containerd-shim.exe
+CONTAINDER_BINARIES=$(CTR_BIN) $(CONTAINERD_BIN) $(SHIM_BIN)
 
 .PHONY: help
 help: ## show make targets
@@ -40,10 +47,13 @@ cross-mac: cross-all-cli ## create tgz with darwin x86_64 client only
 	tar -C build/mac -c -z -f build/mac/docker-$(STATIC_VERSION).tgz docker
 
 .PHONY: cross-win
-cross-win: cross-all-cli cross-win-engine ## create zip file with windows x86_64 client and server
+cross-win: cross-all-cli cross-win-engine $(CONTAINERD_BINARIES) ## create zip file with windows x86_64 client and server
 	mkdir -p build/win/docker
 	cp $(CLI_DIR)/build/docker-windows-amd64 build/win/docker/docker.exe
 	cp $(ENGINE_DIR)/bundles/cross/windows/amd64/dockerd-$(VERSION).exe build/win/docker/dockerd.exe
+	for binary in $(CONTAINERD_BINARIES); do ; \
+		cp $$binary build/win/docker/$$(basename $$binary); \
+	done
 	docker run --rm -v $(CURDIR)/build/win:/v -w /v alpine sh -c 'apk update&&apk add zip&&zip -r docker-$(STATIC_VERSION).zip docker'
 	$(CHOWN) -R $(shell id -u):$(shell id -g) build
 
@@ -68,3 +78,16 @@ cross-all-cli:
 .PHONY: cross-win-engine
 cross-win-engine:
 	$(MAKE) -C $(ENGINE_DIR) VERSION=$(VERSION) DOCKER_CROSSPLATFORMS=windows/amd64 cross
+
+$(CONTAINERD_DIR):
+	git clone git@github.com:$(CONTAINERD_REPO)
+	git checkout -b build $(CONTAINERD_REF)
+
+$(CTR_BIN): $(CONTAINERD_DIR)
+	$(MAKE) -C $(CONTAINERD_DIR) bin/ctr
+
+$(CONTAINDERD_BIN): $(CONTAINDERD_DIR)
+	$(MAKE) -C $(CONTAINERD_DIR) bin/containerd
+
+$(SHIM_BIN): $(CONTAINERD_DIR)
+	$(MAKE) -C $(CONTAINERD_DIR) bin/containerd-shim
